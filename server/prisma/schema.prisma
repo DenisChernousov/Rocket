@@ -1,0 +1,206 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  username     String   @unique
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  balance      Float    @default(1000.00)
+  avatarUrl    String?  @map("avatar_url")
+  role         String   @default("USER")           // USER | ADMIN
+  xp           Int      @default(0)
+  level        Int      @default(1)
+  referralCode String   @unique @default(cuid()) @map("referral_code")
+  referredBy   String?  @map("referred_by")
+  isBanned     Boolean  @default(false) @map("is_banned")
+  isMuted      Boolean  @default(false) @map("is_muted")
+  lastDailyAt  DateTime? @map("last_daily_at")
+  dailyStreak  Int      @default(0) @map("daily_streak")
+  totalWagered Float    @default(0) @map("total_wagered")
+  totalProfit  Float    @default(0) @map("total_profit")
+  gamesPlayed  Int      @default(0) @map("games_played")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  bets             Bet[]
+  transactions     Transaction[]
+  refreshTokens    RefreshToken[]
+  chatMessages     ChatMessage[]
+  userAchievements UserAchievement[]
+  promoUsages      PromoUsage[]
+  dailyBonuses     DailyBonus[]
+
+  @@index([role])
+  @@index([referralCode])
+  @@map("users")
+}
+
+model Game {
+  id          String   @id @default(cuid())
+  hash        String   @unique
+  seed        String
+  crashPoint  Float    @map("crash_point")
+  status      String   @default("PENDING")
+  startedAt   DateTime? @map("started_at")
+  crashedAt   DateTime? @map("crashed_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  bets Bet[]
+
+  @@index([status])
+  @@index([createdAt])
+  @@map("games")
+}
+
+model Bet {
+  id         String   @id @default(cuid())
+  userId     String   @map("user_id")
+  gameId     String   @map("game_id")
+  amount     Float
+  cashOutAt  Float?   @map("cash_out_at")
+  profit     Float?
+  status     String   @default("PENDING")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id])
+  game Game @relation(fields: [gameId], references: [id])
+
+  @@index([userId])
+  @@index([gameId])
+  @@index([status])
+  @@map("bets")
+}
+
+model Transaction {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  type      String
+  amount    Float
+  balBefore Float    @map("bal_before")
+  balAfter  Float    @map("bal_after")
+  refId     String?  @map("ref_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@map("transactions")
+}
+
+model RefreshToken {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  token     String   @unique
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+// === CHAT ===
+
+model ChatMessage {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  message   String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([createdAt])
+  @@map("chat_messages")
+}
+
+// === ACHIEVEMENTS ===
+
+model Achievement {
+  id          String @id @default(cuid())
+  code        String @unique
+  name        String
+  description String
+  icon        String
+  xpReward    Int    @default(0) @map("xp_reward")
+
+  userAchievements UserAchievement[]
+
+  @@map("achievements")
+}
+
+model UserAchievement {
+  id            String   @id @default(cuid())
+  userId        String   @map("user_id")
+  achievementId String   @map("achievement_id")
+  unlockedAt    DateTime @default(now()) @map("unlocked_at")
+
+  user        User        @relation(fields: [userId], references: [id])
+  achievement Achievement @relation(fields: [achievementId], references: [id])
+
+  @@unique([userId, achievementId])
+  @@map("user_achievements")
+}
+
+// === PROMO CODES ===
+
+model PromoCode {
+  id        String    @id @default(cuid())
+  code      String    @unique
+  bonus     Float
+  maxUses   Int       @default(0) @map("max_uses")
+  usedCount Int       @default(0) @map("used_count")
+  expiresAt DateTime? @map("expires_at")
+  active    Boolean   @default(true)
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  usages PromoUsage[]
+
+  @@map("promo_codes")
+}
+
+model PromoUsage {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  promoId   String   @map("promo_id")
+  amount    Float
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user  User      @relation(fields: [userId], references: [id])
+  promo PromoCode @relation(fields: [promoId], references: [id])
+
+  @@unique([userId, promoId])
+  @@map("promo_usages")
+}
+
+// === DAILY BONUS ===
+
+model DailyBonus {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  amount    Float
+  day       Int
+  claimedAt DateTime @default(now()) @map("claimed_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@map("daily_bonuses")
+}
+
+// === SITE SETTINGS ===
+
+model SiteSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("site_settings")
+}
