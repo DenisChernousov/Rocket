@@ -1,4 +1,4 @@
-import { useRef, useEffect, useCallback } from 'react';
+import { useRef, useEffect, useCallback, type ReactNode } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { GamePhase } from '@/types';
 
@@ -10,6 +10,7 @@ interface Props {
   elapsed: number;
   crashPoint: number | null;
   countdown: number;
+  children?: ReactNode;
 }
 
 function getMultColor(mult: number): { line: string; fill: string; class: string } {
@@ -20,7 +21,7 @@ function getMultColor(mult: number): { line: string; fill: string; class: string
   return { line: '#fbbf24', fill: 'rgba(251,191,36,', class: 'mult-legendary' };
 }
 
-export function CrashChart({ phase, multiplier, elapsed, crashPoint, countdown }: Props) {
+export function CrashChart({ phase, multiplier, elapsed, crashPoint, countdown, children }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const pointsRef = useRef<{ x: number; y: number }[]>([]);
   const phaseRef = useRef(phase);
@@ -194,6 +195,7 @@ export function CrashChart({ phase, multiplier, elapsed, crashPoint, countdown }
   return (
     <div className="relative w-full aspect-[16/9] max-h-[400px] bg-surface rounded-2xl overflow-hidden chart-border">
       <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />
+      {children}
 
       {/* Center overlay */}
       <div className="absolute inset-0 flex items-center justify-center">

@@ -1,6 +1,7 @@
-import { useEffect, useState, lazy, Suspense } from 'react';
+import { useEffect, useRef, useState, lazy, Suspense } from 'react';
 import { AuthProvider, useAuth } from '@/context/AuthContext';
 import { useWebSocket } from '@/hooks/useWebSocket';
+import { useSound } from '@/hooks/useSound';
 import { Header } from '@/components/Layout/Header';
 import { CrashChart } from '@/components/Game/CrashChart';
 import { BetPanel } from '@/components/Betting/BetPanel';
@@ -12,14 +13,19 @@ import { DailyBonusModal } from '@/components/Bonus/DailyBonusModal';
 import { PromoCodeInput } from '@/components/Bonus/PromoCodeInput';
 import Starfield from '@/components/Game/Starfield';
 import RocketAnimation from '@/components/Game/RocketAnimation';
+import { BetResultOverlay } from '@/components/Game/BetResultOverlay';
+import { BetSplash } from '@/components/Game/BetSplash';
+import { LiveWinFeed } from '@/components/Game/LiveWinFeed';
+import { api } from '@/services/api';
+import type { RocketSkinId } from '@/components/Game/RocketSkins';
 import { motion, AnimatePresence } from 'framer-motion';
 
 const LeaderboardPanel = lazy(() => import('@/components/Leaderboard/LeaderboardPanel').then(m => ({ default: m.LeaderboardPanel })));
 const ProfilePanel = lazy(() => import('@/components/Profile/ProfilePanel').then(m => ({ default: m.ProfilePanel })));
 const AdminPanel = lazy(() => import('@/components/Admin/AdminPanel'));
-const AutoBetPanel = lazy(() => import('@/components/Betting/AutoBetPanel').then(m => ({ default: m.AutoBetPanel })));
+const FairVerifier = lazy(() => import('@/components/Game/FairVerifier').then(m => ({ default: m.FairVerifier })));
 
-type Tab = 'game' | 'leaderboard' | 'profile' | 'admin';
+type Tab = 'game' | 'leaderboard' | 'profile' | 'admin' | 'fair';
 
 function GamePage() {
   const { user, updateBalance } = useAuth();
@@ -33,10 +39,47 @@ function GamePage() {
 
   const [activeTab, setActiveTab] = useState<Tab>('game');
   const [dailyOpen, setDailyOpen] = useState(false);
+  const [rocketSkin, setRocketSkin] = useState<RocketSkinId>('classic');
+  const sound = useSound();
+  const prevPhaseRef = useRef(phase);
 
   useEffect(() => {
     if (wsBalance > 0) updateBalance(wsBalance);
   }, [wsBalance, updateBalance]);
+
+  // Fetch public settings (rocket skin)
+  useEffect(() => {
+    api.settings.getPublic().then(s => {
+      if (s.rocket_skin) setRocketSkin(s.rocket_skin as RocketSkinId);
+    }).catch(() => {});
+  }, []);
+
+  // === Sound effects ===
+  useEffect(() => {
+    const prev = prevPhaseRef.current;
+    prevPhaseRef.current = phase;
+
+    if (prev === 'waiting' && phase === 'running') {
+      // Game started — play bet sound if we have a bet
+      if (myBet) sound.playBet();
+    }
+    if (phase === 'crashed' && prev === 'running') {
+      sound.playCrash();
+      // Check if we won
+      if (myBet && myBet.profit !== null && myBet.profit >= 0) {
+        setTimeout(() => sound.playWin(), 300);
+      }
+    }
+  }, [phase, myBet, sound]);
+
+  // Cashout sound
+  useEffect(() => {
+    if (myBet?.cashOutAt && myBet.profit !== null && myBet.profit >= 0) {
+      sound.playCashOut();
+    }
+  }, [myBet?.cashOutAt, sound]);
+
+  // Hotkeys: Space handled in BetPanel (has access to bet amount)
 
   const balance = user?.balance ?? wsBalance;
 
@@ -47,6 +90,9 @@ function GamePage() {
         activeTab={activeTab}
         onTabChange={setActiveTab}
         onOpenDaily={() => setDailyOpen(true)}
+        soundMuted={sound.muted}
+        onToggleSound={sound.toggleMute}
+        playersOnline={players.length}
       />
 
       <AchievementToast achievement={newAchievement} onDismiss={clearAchievement} />
@@ -80,18 +126,18 @@ function GamePage() {
             <div className="lg:col-span-8 space-y-4">
               <div className="relative">
                 <Starfield phase={phase} multiplier={multiplier} />
-                <CrashChart phase={phase} multiplier={multiplier} elapsed={elapsed} crashPoint={crashPoint} countdown={countdown} />
-                <RocketAnimation phase={phase} multiplier={multiplier} elapsed={elapsed} crashPoint={crashPoint} />
+                <CrashChart phase={phase} multiplier={multiplier} elapsed={elapsed} crashPoint={crashPoint} countdown={countdown}>
+                  <RocketAnimation phase={phase} multiplier={multiplier} elapsed={elapsed} crashPoint={crashPoint} rocketSkin={rocketSkin} />
+                </CrashChart>
+                <BetSplash phase={phase} myBet={myBet} />
+                <LiveWinFeed players={players} />
+                <BetResultOverlay phase={phase} myBet={myBet} />
               </div>
               <PlayersList players={players} />
             </div>
 
             <div className="lg:col-span-4 space-y-4">
               <BetPanel phase={phase} multiplier={multiplier} myBet={myBet} balance={balance} onPlaceBet={placeBet} onCashOut={cashOut} />
-
-              <Suspense fallback={null}>
-                <AutoBetPanel phase={phase} onPlaceBet={placeBet} balance={balance} isActive={false} />
-              </Suspense>
 
               {user && <PromoCodeInput onSuccess={(_a, b) => updateBalance(b)} />}
 
@@ -125,11 +171,31 @@ function GamePage() {
         </main>
       )}
 
+      {activeTab === 'fair' && (
+        <main className="flex-1 max-w-5xl mx-auto w-full px-4 py-4">
+          <Suspense fallback={<div className="text-center text-gray-500 py-8">Загрузка...</div>}>
+            <FairVerifier />
+          </Suspense>
+        </main>
+      )}
+
       <footer className="text-center text-gray-600 text-xs py-4 border-t border-white/5">
-        Provably Fair | Game #{gameId.slice(0, 8)}
-        {phase === 'crashed' && hash && (
-          <span className="ml-2 text-gray-500">Hash: {hash.slice(0, 16)}...</span>
-        )}
+        <div className="flex items-center justify-center gap-3">
+          <span className="flex items-center gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-accent online-dot" />
+            Provably Fair
+          </span>
+          <span className="text-gray-700">|</span>
+          <span className="tabular-nums">Game #{gameId.slice(0, 8)}</span>
+          {phase === 'crashed' && hash && (
+            <>
+              <span className="text-gray-700">|</span>
+              <span className="text-gray-500 tabular-nums cursor-pointer hover:text-gray-400 transition" title={hash}>
+                Hash: {hash.slice(0, 12)}...
+              </span>
+            </>
+          )}
+        </div>
       </footer>
     </div>
   );

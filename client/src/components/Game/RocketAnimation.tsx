@@ -1,4 +1,4 @@
-import { useMemo, useRef, useEffect, useState } from 'react';
+import { useMemo, useRef, useEffect, useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { GamePhase } from '@/types';
 import { RocketSVG, type RocketSkinId } from './RocketSkins';
@@ -57,21 +57,25 @@ export default function RocketAnimation({ phase, multiplier, elapsed, rocketSkin
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerSize, setContainerSize] = useState({ w: 0, h: 0 });
 
-  // Track container size to compute correct pixel-based position
-  useEffect(() => {
+  const updateSize = useCallback(() => {
     const el = containerRef.current;
     if (!el) return;
-    const update = () => {
-      const rect = el.getBoundingClientRect();
-      if (rect.width > 0 && rect.height > 0) {
-        setContainerSize({ w: rect.width, h: rect.height });
-      }
-    };
-    update();
-    const observer = new ResizeObserver(update);
-    observer.observe(el);
-    return () => observer.disconnect();
+    // Use the parent element (the chart wrapper div) for accurate dimensions
+    const target = el.parentElement ?? el;
+    const rect = target.getBoundingClientRect();
+    if (rect.width > 0 && rect.height > 0) {
+      setContainerSize({ w: rect.width, h: rect.height });
+    }
   }, []);
+
+  useEffect(() => {
+    updateSize();
+    requestAnimationFrame(updateSize);
+    const observer = new ResizeObserver(updateSize);
+    const target = containerRef.current?.parentElement ?? containerRef.current;
+    if (target) observer.observe(target);
+    return () => observer.disconnect();
+  }, [updateSize]);
 
   const isRunning = phase === 'running';
   const isCrashed = phase === 'crashed';
