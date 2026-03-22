@@ -1,6 +1,8 @@
-import { useRef, useEffect } from 'react';
+import { useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { GamePhase } from '@/types';
+
+export const CHART_PADDING = { top: 20, bottom: 40, left: 45, right: 10 } as const;
 
 interface Props {
   phase: GamePhase;
@@ -10,15 +12,26 @@ interface Props {
   countdown: number;
 }
 
+function getMultColor(mult: number): { line: string; fill: string; class: string } {
+  if (mult < 2) return { line: '#10b981', fill: 'rgba(16,185,129,', class: 'mult-low' };
+  if (mult < 5) return { line: '#f59e0b', fill: 'rgba(245,158,11,', class: 'mult-mid' };
+  if (mult < 10) return { line: '#ef4444', fill: 'rgba(239,68,68,', class: 'mult-high' };
+  if (mult < 50) return { line: '#8b5cf6', fill: 'rgba(139,92,246,', class: 'mult-epic' };
+  return { line: '#fbbf24', fill: 'rgba(251,191,36,', class: 'mult-legendary' };
+}
+
 export function CrashChart({ phase, multiplier, elapsed, crashPoint, countdown }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const pointsRef = useRef<{ x: number; y: number }[]>([]);
+  const phaseRef = useRef(phase);
+  const multiplierRef = useRef(multiplier);
+  phaseRef.current = phase;
+  multiplierRef.current = multiplier;
 
   // Collect points during running phase
   useEffect(() => {
     if (phase === 'running') {
       pointsRef.current.push({ x: elapsed, y: multiplier });
-      // Keep max 2000 points
       if (pointsRef.current.length > 2000) {
         pointsRef.current = pointsRef.current.filter((_, i) => i % 2 === 0);
       }
@@ -27,8 +40,7 @@ export function CrashChart({ phase, multiplier, elapsed, crashPoint, countdown }
     }
   }, [phase, elapsed, multiplier]);
 
-  // Draw canvas
-  useEffect(() => {
+  const draw = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
@@ -36,106 +48,152 @@ export function CrashChart({ phase, multiplier, elapsed, crashPoint, countdown }
 
     const dpr = window.devicePixelRatio || 1;
     const rect = canvas.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return;
+
     canvas.width = rect.width * dpr;
     canvas.height = rect.height * dpr;
     ctx.scale(dpr, dpr);
 
     const w = rect.width;
     const h = rect.height;
-
-    // Clear
+    const phase = phaseRef.current;
+    const multiplier = multiplierRef.current;
     ctx.clearRect(0, 0, w, h);
 
-    // Grid
-    ctx.strokeStyle = 'rgba(255,255,255,0.04)';
-    ctx.lineWidth = 1;
-    for (let i = 1; i < 5; i++) {
-      const y = h - (i / 5) * h;
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(w, y);
-      ctx.stroke();
-    }
-
-    const points = pointsRef.current;
-    if (points.length < 2) return;
-
-    const maxTime = Math.max(points[points.length - 1].x, 3000);
-    const maxMult = Math.max(multiplier, 2);
-
-    const padding = { top: 20, bottom: 40, left: 10, right: 10 };
+    // Grid with axis labels
+    const padding = CHART_PADDING;
     const plotW = w - padding.left - padding.right;
     const plotH = h - padding.top - padding.bottom;
+
+    ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+    ctx.lineWidth = 1;
+    const maxMult = Math.max(multiplier, 2);
+
+    // Horizontal grid lines with multiplier labels
+    for (let i = 1; i <= 4; i++) {
+      const y = padding.top + plotH - (i / 4) * plotH;
+      ctx.beginPath();
+      ctx.moveTo(padding.left, y);
+      ctx.lineTo(w - padding.right, y);
+      ctx.stroke();
+
+      const labelMult = 1 + (i / 4) * (maxMult - 1);
+      ctx.fillStyle = 'rgba(255,255,255,0.2)';
+      ctx.font = '10px Inter, system-ui';
+      ctx.textAlign = 'right';
+      ctx.fillText(`${labelMult.toFixed(1)}x`, padding.left - 6, y + 3);
+    }
+
+    // Vertical grid lines with time labels
+    const points = pointsRef.current;
+    const maxTime = points.length > 0 ? Math.max(points[points.length - 1].x, 3000) : 3000;
+    for (let i = 1; i <= 4; i++) {
+      const x = padding.left + (i / 4) * plotW;
+      ctx.beginPath();
+      ctx.moveTo(x, padding.top);
+      ctx.lineTo(x, padding.top + plotH);
+      ctx.stroke();
+
+      const timeSec = ((i / 4) * maxTime / 1000).toFixed(0);
+      ctx.fillStyle = 'rgba(255,255,255,0.15)';
+      ctx.textAlign = 'center';
+      ctx.fillText(`${timeSec}s`, x, padding.top + plotH + 16);
+    }
+
+    if (points.length < 2) return;
 
     const toX = (time: number) => padding.left + (time / maxTime) * plotW;
     const toY = (mult: number) => padding.top + plotH - ((mult - 1) / (maxMult - 1)) * plotH;
 
-    // Draw line
     const crashed = phase === 'crashed';
-    const gradient = ctx.createLinearGradient(0, h, 0, 0);
-    if (crashed) {
-      gradient.addColorStop(0, 'rgba(239, 68, 68, 0.0)');
-      gradient.addColorStop(1, 'rgba(239, 68, 68, 0.3)');
-    } else {
-      gradient.addColorStop(0, 'rgba(16, 185, 129, 0.0)');
-      gradient.addColorStop(1, 'rgba(16, 185, 129, 0.3)');
-    }
+    const multColor = crashed
+      ? { line: '#ef4444', fill: 'rgba(239,68,68,' }
+      : getMultColor(multiplier);
 
-    // Fill under curve
+    // Fill under curve with gradient
+    const gradient = ctx.createLinearGradient(0, h, 0, 0);
+    gradient.addColorStop(0, multColor.fill + '0.0)');
+    gradient.addColorStop(0.5, multColor.fill + '0.1)');
+    gradient.addColorStop(1, multColor.fill + '0.35)');
+
     ctx.beginPath();
     ctx.moveTo(toX(points[0].x), toY(points[0].y));
     for (let i = 1; i < points.length; i++) {
       ctx.lineTo(toX(points[i].x), toY(points[i].y));
     }
-    ctx.lineTo(toX(points[points.length - 1].x), h - padding.bottom);
-    ctx.lineTo(toX(points[0].x), h - padding.bottom);
+    ctx.lineTo(toX(points[points.length - 1].x), padding.top + plotH);
+    ctx.lineTo(toX(points[0].x), padding.top + plotH);
     ctx.closePath();
     ctx.fillStyle = gradient;
     ctx.fill();
 
-    // Stroke curve
+    // Stroke curve with glow
+    ctx.shadowColor = multColor.line;
+    ctx.shadowBlur = 12;
     ctx.beginPath();
     ctx.moveTo(toX(points[0].x), toY(points[0].y));
     for (let i = 1; i < points.length; i++) {
       ctx.lineTo(toX(points[i].x), toY(points[i].y));
     }
-    ctx.strokeStyle = crashed ? '#ef4444' : '#10b981';
+    ctx.strokeStyle = multColor.line;
     ctx.lineWidth = 3;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     ctx.stroke();
+    ctx.shadowBlur = 0;
 
-    // Dot at end
+    // Animated dot at end
     if (!crashed) {
       const lastP = points[points.length - 1];
       const dotX = toX(lastP.x);
       const dotY = toY(lastP.y);
 
+      // Outer glow
+      const glowGrad = ctx.createRadialGradient(dotX, dotY, 0, dotX, dotY, 20);
+      glowGrad.addColorStop(0, multColor.fill + '0.4)');
+      glowGrad.addColorStop(1, multColor.fill + '0.0)');
       ctx.beginPath();
-      ctx.arc(dotX, dotY, 6, 0, Math.PI * 2);
-      ctx.fillStyle = '#10b981';
+      ctx.arc(dotX, dotY, 20, 0, Math.PI * 2);
+      ctx.fillStyle = glowGrad;
       ctx.fill();
 
-      // Glow
+      // Inner dot
       ctx.beginPath();
-      ctx.arc(dotX, dotY, 12, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(16, 185, 129, 0.2)';
+      ctx.arc(dotX, dotY, 5, 0, Math.PI * 2);
+      ctx.fillStyle = multColor.line;
+      ctx.fill();
+
+      // White center
+      ctx.beginPath();
+      ctx.arc(dotX, dotY, 2, 0, Math.PI * 2);
+      ctx.fillStyle = '#fff';
       ctx.fill();
     }
-  }, [phase, multiplier, elapsed]);
+  }, []);
+
+  // Draw on every data update
+  useEffect(() => { draw(); }, [phase, multiplier, elapsed, draw]);
+
+  // ResizeObserver — перерисовываем при изменении размера контейнера
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const observer = new ResizeObserver(() => { draw(); });
+    observer.observe(canvas);
+    // Initial draw after layout
+    requestAnimationFrame(() => { draw(); });
+    return () => observer.disconnect();
+  }, [draw]);
 
   const displayMultiplier = phase === 'crashed' ? (crashPoint || multiplier) : multiplier;
   const isRunning = phase === 'running';
   const isCrashed = phase === 'crashed';
   const isWaiting = phase === 'waiting';
+  const multColorClass = isCrashed ? '' : getMultColor(displayMultiplier).class;
 
   return (
-    <div className="relative w-full aspect-[16/9] max-h-[400px] bg-surface rounded-2xl overflow-hidden border border-white/5">
-      {/* Canvas */}
-      <canvas
-        ref={canvasRef}
-        className="absolute inset-0 w-full h-full"
-      />
+    <div className="relative w-full aspect-[16/9] max-h-[400px] bg-surface rounded-2xl overflow-hidden chart-border">
+      <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />
 
       {/* Center overlay */}
       <div className="absolute inset-0 flex items-center justify-center">
@@ -148,10 +206,15 @@ export function CrashChart({ phase, multiplier, elapsed, crashPoint, countdown }
               exit={{ scale: 0.8, opacity: 0 }}
               className="text-center"
             >
-              <div className="text-gray-400 text-sm mb-2">Следующий раунд через</div>
-              <div className="text-4xl font-bold text-white tabular-nums">
-                {Math.max(0, Math.ceil(countdown / 1000))}с
-              </div>
+              <div className="text-gray-500 text-xs uppercase tracking-widest mb-2">Следующий раунд</div>
+              <motion.div
+                className="text-5xl font-black text-white tabular-nums"
+                animate={{ scale: [1, 1.05, 1] }}
+                transition={{ duration: 1, repeat: Infinity }}
+              >
+                {Math.max(0, Math.ceil(countdown / 1000))}
+              </motion.div>
+              <div className="text-gray-500 text-xs mt-1">секунд</div>
             </motion.div>
           )}
 
@@ -160,10 +223,10 @@ export function CrashChart({ phase, multiplier, elapsed, crashPoint, countdown }
               key="running"
               initial={{ scale: 0.5, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
-              className="text-center crash-glow"
+              className="text-center"
             >
               <motion.div
-                className="text-6xl sm:text-7xl font-black text-accent tabular-nums"
+                className={`text-6xl sm:text-8xl font-black tabular-nums ${multColorClass}`}
                 animate={{ scale: [1, 1.02, 1] }}
                 transition={{ duration: 0.3, repeat: Infinity }}
               >
@@ -178,12 +241,24 @@ export function CrashChart({ phase, multiplier, elapsed, crashPoint, countdown }
               initial={{ scale: 2, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               transition={{ type: 'spring', damping: 15 }}
-              className="text-center crash-glow-red"
+              className="text-center"
             >
-              <div className="text-6xl sm:text-7xl font-black text-danger tabular-nums">
+              <motion.div
+                className="text-6xl sm:text-8xl font-black text-danger tabular-nums"
+                style={{ textShadow: '0 0 40px rgba(239,68,68,0.6)' }}
+                animate={{ opacity: [1, 0.7, 1] }}
+                transition={{ duration: 0.8, repeat: Infinity }}
+              >
                 {displayMultiplier.toFixed(2)}x
-              </div>
-              <div className="text-danger/60 text-lg mt-1 font-medium">CRASHED</div>
+              </motion.div>
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.2 }}
+                className="text-danger/70 text-sm mt-2 font-bold uppercase tracking-[0.3em]"
+              >
+                CRASHED
+              </motion.div>
             </motion.div>
           )}
         </AnimatePresence>
