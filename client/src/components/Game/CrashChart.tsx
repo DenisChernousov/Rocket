@@ -203,8 +203,8 @@ export function CrashChart({ phase, multiplier, elapsed, crashPoint, countdown, 
       <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />
       {children}
 
-      {/* Center overlay */}
-      <div className="absolute inset-0 flex items-center justify-center">
+      {/* Center overlay — z-20 чтобы быть выше ракеты (z-10) */}
+      <div className="absolute inset-0 flex items-center justify-center z-20">
         <AnimatePresence mode="wait">
           {isWaiting && (
             <motion.div
