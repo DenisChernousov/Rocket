@@ -4,6 +4,9 @@ import type { GamePhase } from '@/types';
 
 export const CHART_PADDING = { top: 20, bottom: 40, left: 45, right: 10 } as const;
 
+// Module-level storage — survives component unmount (tab navigation)
+let _points: { x: number; y: number }[] = [];
+
 interface Props {
   phase: GamePhase;
   multiplier: number;
@@ -23,7 +26,8 @@ function getMultColor(mult: number): { line: string; fill: string; class: string
 
 export function CrashChart({ phase, multiplier, elapsed, crashPoint, countdown, children }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const pointsRef = useRef<{ x: number; y: number }[]>([]);
+  // pointsRef points to the module-level array — survives tab navigation
+  const pointsRef = useRef<{ x: number; y: number }[]>(_points);
   const phaseRef = useRef(phase);
   const multiplierRef = useRef(multiplier);
   phaseRef.current = phase;
@@ -32,11 +36,13 @@ export function CrashChart({ phase, multiplier, elapsed, crashPoint, countdown, 
   // Collect points during running phase
   useEffect(() => {
     if (phase === 'running') {
-      pointsRef.current.push({ x: elapsed, y: multiplier });
-      if (pointsRef.current.length > 2000) {
-        pointsRef.current = pointsRef.current.filter((_, i) => i % 2 === 0);
+      _points.push({ x: elapsed, y: multiplier });
+      if (_points.length > 2000) {
+        _points = _points.filter((_, i) => i % 2 === 0);
       }
+      pointsRef.current = _points;
     } else if (phase === 'waiting') {
+      _points = [];
       pointsRef.current = [];
     }
   }, [phase, elapsed, multiplier]);
